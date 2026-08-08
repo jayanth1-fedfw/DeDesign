@@ -26,6 +26,10 @@ const upload = multer({
   },
 });
 
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'DesignDecode API' });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
