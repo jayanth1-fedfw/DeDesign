@@ -1,0 +1,7 @@
+node_modules/
+*.log
+*.pid
+.env
+.env.local
+eng.traineddata
+test-scratch/
