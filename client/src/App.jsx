@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Loader2, AlertTriangle, Sparkles } from 'lucide-react';
 import Hero from './components/Hero';
 import ExampleGallery from './components/ExampleGallery';
@@ -6,13 +6,12 @@ import UploadPanel from './components/UploadPanel';
 import ZoneOverlay from './components/ZoneOverlay';
 import RecreationGuide from './components/RecreationGuide';
 import { extractPalette } from './lib/colors';
-import { analyzeDesign } from './lib/api';
+import { generateAnalysis } from './lib/mockAnalyze';
 import { exportElementAsPdf } from './lib/pdf';
 
 const STATUS = {
   IDLE: 'idle',
   PREPARING: 'preparing',
-  ANALYZING: 'analyzing',
   READY: 'ready',
   ERROR: 'error',
 };
@@ -22,70 +21,48 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [dimensions, setDimensions] = useState(null);
   const [palette, setPalette] = useState([]);
-  const [analysis, setAnalysis] = useState(null);
   const [zones, setZones] = useState([]);
   const [status, setStatus] = useState(STATUS.IDLE);
   const [uploadError, setUploadError] = useState(null);
-  const [analysisError, setAnalysisError] = useState(null);
   const [exporting, setExporting] = useState(false);
 
   const guideRef = useRef(null);
 
-  const resetResults = useCallback(() => {
+  const analysis = useMemo(
+    () => (dimensions ? generateAnalysis({ dimensions, palette, zones }) : null),
+    [dimensions, palette, zones]
+  );
+
+  const loadFile = useCallback((newFile) => {
+    setUploadError(null);
+    setFile(newFile);
     setDimensions(null);
     setPalette([]);
-    setAnalysis(null);
     setZones([]);
-    setAnalysisError(null);
-  }, []);
+    setStatus(STATUS.PREPARING);
 
-  const runAnalysis = useCallback(async (targetFile, extractedPalette) => {
-    setStatus(STATUS.ANALYZING);
-    setAnalysisError(null);
-    try {
-      const data = await analyzeDesign(targetFile, extractedPalette);
-      setAnalysis(data);
-      setZones(data.zones);
+    const url = URL.createObjectURL(newFile);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+
+    const img = new Image();
+    img.onload = () => {
+      setDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+      try {
+        setPalette(extractPalette(img, 6));
+      } catch {
+        setPalette([]);
+      }
       setStatus(STATUS.READY);
-    } catch {
-      setAnalysisError('Could not analyze this design. Make sure the DesignDecode server is running, then try again.');
+    };
+    img.onerror = () => {
+      setUploadError('That file could not be read as an image.');
       setStatus(STATUS.ERROR);
-    }
+    };
+    img.src = url;
   }, []);
-
-  const loadFile = useCallback(
-    (newFile) => {
-      resetResults();
-      setUploadError(null);
-      setFile(newFile);
-      setStatus(STATUS.PREPARING);
-
-      const url = URL.createObjectURL(newFile);
-      setPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-
-      const img = new Image();
-      img.onload = async () => {
-        setDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-        let extractedPalette = [];
-        try {
-          extractedPalette = extractPalette(img, 6);
-          setPalette(extractedPalette);
-        } catch {
-          extractedPalette = [];
-        }
-        runAnalysis(newFile, extractedPalette);
-      };
-      img.onerror = () => {
-        setUploadError('That file could not be read as an image.');
-        setStatus(STATUS.ERROR);
-      };
-      img.src = url;
-    },
-    [resetResults, runAnalysis]
-  );
 
   function handleFile(selectedFile, validationError) {
     if (validationError) {
@@ -100,8 +77,10 @@ export default function App() {
     setFile(null);
     setPreviewUrl(null);
     setUploadError(null);
+    setDimensions(null);
+    setPalette([]);
+    setZones([]);
     setStatus(STATUS.IDLE);
-    resetResults();
   }
 
   async function handlePickExample(example) {
@@ -134,7 +113,7 @@ export default function App() {
     }
   }
 
-  const isBusy = status === STATUS.PREPARING || status === STATUS.ANALYZING;
+  const isBusy = status === STATUS.PREPARING;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950">
@@ -174,36 +153,20 @@ export default function App() {
           {isBusy && (
             <div className="flex h-full min-h-80 flex-col items-center justify-center gap-3 text-center">
               <Loader2 size={28} className="animate-spin text-violet-500" />
-              <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
-                {status === STATUS.PREPARING ? 'Reading image & extracting colors...' : 'Analyzing design...'}
-              </p>
-              <p className="text-xs text-zinc-400">Detecting text, shapes, and layout zones</p>
+              <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">Reading image & extracting colors...</p>
             </div>
           )}
 
           {status === STATUS.ERROR && (
             <div className="flex h-full min-h-80 flex-col items-center justify-center gap-3 text-center">
               <AlertTriangle size={28} className="text-red-500" />
-              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{analysisError || uploadError}</p>
-              {file && (
-                <button
-                  type="button"
-                  onClick={() => runAnalysis(file, palette)}
-                  className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700"
-                >
-                  Try again
-                </button>
-              )}
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">{uploadError}</p>
             </div>
           )}
 
           {status === STATUS.READY && analysis && (
             <RecreationGuide
-              canvasSize={
-                dimensions
-                  ? { ...analysis.canvas_size_guess, width: dimensions.width, height: dimensions.height }
-                  : analysis.canvas_size_guess
-              }
+              canvasSize={{ ...analysis.canvas_size_guess, width: dimensions.width, height: dimensions.height }}
               palette={palette}
               zones={zones}
               steps={analysis.steps}
