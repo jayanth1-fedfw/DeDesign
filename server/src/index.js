@@ -92,7 +92,3 @@ const PORT = process.env.PORT || 5174;
 app.listen(PORT, () => {
   console.log(`DesignDecode server listening on http://localhost:${PORT}`);
 });
-
-app.get('/', (req, res) => {
-  res.json({ ok: true, service: 'DesignDecode API' });
-});
